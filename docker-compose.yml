@@ -1,0 +1,60 @@
+services:
+  db:
+    image: public.ecr.aws/docker/library/postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lingyao
+      POSTGRES_USER: lingyao
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lingyao_local_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lingyao -d lingyao"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://lingyao:${POSTGRES_PASSWORD:-lingyao_local_password}@db:5432/lingyao
+      SECRET_KEY: ${SECRET_KEY:-please-change-this-before-production}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      UPLOAD_DIR: /data/uploads
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+      SMS_WEBHOOK_URL: ${SMS_WEBHOOK_URL:-}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      COS_REGION: ${COS_REGION:-}
+      COS_BUCKET: ${COS_BUCKET:-}
+      COS_SECRET_ID: ${COS_SECRET_ID:-}
+      COS_SECRET_KEY: ${COS_SECRET_KEY:-}
+      COS_PREFIX: ${COS_PREFIX:-lingyao-ats/}
+    volumes:
+      - resume_files:/data/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  resume_files:
