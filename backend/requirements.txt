@@ -1,0 +1,10 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+sqlalchemy==2.0.41
+psycopg[binary]==3.2.9
+python-multipart==0.0.20
+pypdf==5.5.0
+python-docx==1.1.2
+pytest==8.3.5
+httpx==0.28.1
+cos-python-sdk-v5==1.9.37
