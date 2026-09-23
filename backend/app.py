@@ -287,7 +287,7 @@ def extract_resume(data: bytes, filename: str) -> tuple[str, dict]:
     return text, {"name": lines[0][:40] if lines else Path(filename).stem, "phone": phone.group(1) if phone else None, "email": email.group(0) if email else None, "summary": text[:3000]}
 
 
-app = FastAPI(title="Lingyao ATS API", version="1.0.0")
+app = FastAPI(title="财富自由之路 API", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(","), allow_origin_regex=r"http://((10|192\.168)\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+):3000", allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
