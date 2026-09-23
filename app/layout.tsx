@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "灵曜猎聘系统 · Lingyao ATS",
+  title: "财富自由之路",
   description: "面向猎头团队的人才、客户、职位与招聘流程管理系统。",
   icons: {
     icon: "/favicon.svg",
