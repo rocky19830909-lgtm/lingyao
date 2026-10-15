@@ -485,12 +485,14 @@ def download(attachment_id:int,db:Session=Depends(get_db),user:User=Depends(curr
 def clients(db:Session=Depends(get_db),user:User=Depends(current_user)): return db.query(Client).order_by(Client.name).all()
 @app.post("/api/clients",status_code=201)
 def create_client(body:ClientIn,db:Session=Depends(get_db),user:User=Depends(current_user)):
+    require_admin(user)
     c=Client(**body.model_dump(),owner_id=user.id);db.add(c);db.commit();return c
 @app.get("/api/jobs")
 def jobs(status:str|None=None,db:Session=Depends(get_db),user:User=Depends(current_user)):
     q=db.query(Job);return (q.filter(Job.status==status) if status else q).order_by(Job.id.desc()).all()
 @app.post("/api/jobs",status_code=201)
 def create_job(body:JobIn,db:Session=Depends(get_db),user:User=Depends(current_user)):
+    require_admin(user)
     if not db.get(Client,body.client_id): raise HTTPException(404,"客户不存在")
     j=Job(**body.model_dump(),owner_id=user.id);db.add(j);db.commit();return j
 
