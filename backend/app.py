@@ -561,6 +561,7 @@ def list_resume_flows(db:Session=Depends(get_db),user:User=Depends(current_user)
 
 @app.post("/api/resume-flow",status_code=201)
 def create_resume_flow(body:ResumeFlowIn,db:Session=Depends(get_db),user:User=Depends(current_user)):
+    require_admin(user)
     if body.flow_type not in ("application","personality","interview"):raise HTTPException(400,"无效流程类型")
     candidate=db.get(Candidate,body.candidate_id)
     if not candidate:raise HTTPException(404,"候选人不存在")
@@ -644,6 +645,7 @@ def delete_candidate(candidate_id:int,db:Session=Depends(get_db),user:User=Depen
 
 @app.put("/api/clients/{client_id}")
 def update_client(client_id:int,body:ClientUpdate,db:Session=Depends(get_db),user:User=Depends(current_user)):
+    require_admin(user)
     c=db.get(Client,client_id)
     if not c:raise HTTPException(404,"客户不存在")
     for k,v in body.model_dump().items():setattr(c,k,v)
@@ -651,10 +653,36 @@ def update_client(client_id:int,body:ClientUpdate,db:Session=Depends(get_db),use
 
 @app.put("/api/jobs/{job_id}")
 def update_job(job_id:int,body:JobUpdate,db:Session=Depends(get_db),user:User=Depends(current_user)):
+    require_admin(user)
     j=db.get(Job,job_id)
     if not j:raise HTTPException(404,"职位不存在")
     for k,v in body.model_dump().items():setattr(j,k,v)
     audit(db,user,"update","job",j.id,j.title);db.commit();return j
+
+@app.delete("/api/jobs/{job_id}",status_code=204)
+def delete_job(job_id:int,db:Session=Depends(get_db),user:User=Depends(current_user)):
+    require_admin(user);j=db.get(Job,job_id)
+    if not j:raise HTTPException(404,"职位不存在")
+    db.query(Application).filter(Application.job_id==job_id).delete()
+    db.query(ResumeFlow).filter(ResumeFlow.job_id==job_id).update({ResumeFlow.job_id:None})
+    audit(db,user,"delete","job",j.id,j.title);db.delete(j);db.commit()
+
+@app.delete("/api/clients/{client_id}",status_code=204)
+def delete_client(client_id:int,db:Session=Depends(get_db),user:User=Depends(current_user)):
+    require_admin(user);c=db.get(Client,client_id)
+    if not c:raise HTTPException(404,"客户不存在")
+    for j in db.query(Job).filter(Job.client_id==client_id).all():
+        db.query(Application).filter(Application.job_id==j.id).delete()
+        db.query(ResumeFlow).filter(ResumeFlow.job_id==j.id).update({ResumeFlow.job_id:None})
+        db.delete(j)
+    db.query(CompanySender).filter(CompanySender.client_id==client_id).update({CompanySender.client_id:None})
+    audit(db,user,"delete","client",c.id,c.name);db.delete(c);db.commit()
+
+@app.delete("/api/resume-flow/{flow_id}",status_code=204)
+def delete_resume_flow(flow_id:int,db:Session=Depends(get_db),user:User=Depends(current_user)):
+    require_admin(user);x=db.get(ResumeFlow,flow_id)
+    if not x:raise HTTPException(404,"简历流程不存在")
+    audit(db,user,"delete","resume_flow",x.id,x.title);db.delete(x);db.commit()
 
 @app.get("/api/dashboard")
 def dashboard(db:Session=Depends(get_db),user:User=Depends(current_user)):
