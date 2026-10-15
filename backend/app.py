@@ -485,8 +485,7 @@ def download(attachment_id:int,db:Session=Depends(get_db),user:User=Depends(curr
 def clients(db:Session=Depends(get_db),user:User=Depends(current_user)): return db.query(Client).order_by(Client.name).all()
 @app.post("/api/clients",status_code=201)
 def create_client(body:ClientIn,db:Session=Depends(get_db),user:User=Depends(current_user)):
-    require_admin(user)
-    c=Client(**body.model_dump(),owner_id=user.id);db.add(c);db.commit();return c
+    require_admin(user);c=Client(**body.model_dump(),owner_id=user.id);db.add(c);db.commit();return c
 @app.get("/api/jobs")
 def jobs(status:str|None=None,db:Session=Depends(get_db),user:User=Depends(current_user)):
     q=db.query(Job);return (q.filter(Job.status==status) if status else q).order_by(Job.id.desc()).all()
@@ -647,16 +646,14 @@ def delete_candidate(candidate_id:int,db:Session=Depends(get_db),user:User=Depen
 
 @app.put("/api/clients/{client_id}")
 def update_client(client_id:int,body:ClientUpdate,db:Session=Depends(get_db),user:User=Depends(current_user)):
-    require_admin(user)
-    c=db.get(Client,client_id)
+    require_admin(user);c=db.get(Client,client_id)
     if not c:raise HTTPException(404,"客户不存在")
     for k,v in body.model_dump().items():setattr(c,k,v)
     audit(db,user,"update","client",c.id,c.name);db.commit();return c
 
 @app.put("/api/jobs/{job_id}")
 def update_job(job_id:int,body:JobUpdate,db:Session=Depends(get_db),user:User=Depends(current_user)):
-    require_admin(user)
-    j=db.get(Job,job_id)
+    require_admin(user);j=db.get(Job,job_id)
     if not j:raise HTTPException(404,"职位不存在")
     for k,v in body.model_dump().items():setattr(j,k,v)
     audit(db,user,"update","job",j.id,j.title);db.commit();return j
