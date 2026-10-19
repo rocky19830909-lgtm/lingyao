@@ -33,6 +33,20 @@ SMS_WEBHOOK_URL=https://你的短信发送网关地址
 
 短信网关会收到 `phone`、`signature` 和 `content` 三个字段。正式发送前应配置 HTTPS 域名，并在短信服务商完成签名和模板审核。
 
+也可以直接接入腾讯云短信：
+
+```env
+PUBLIC_WEB_URL=https://lingyao888.work
+TENCENT_SMS_SECRET_ID=腾讯云API密钥ID
+TENCENT_SMS_SECRET_KEY=腾讯云API密钥Key
+TENCENT_SMS_SDK_APP_ID=短信应用SDK AppID
+TENCENT_SMS_SIGN_NAME=已审核通过的短信签名（不带方括号）
+TENCENT_SMS_TEMPLATE_ID=已审核通过的模板ID
+TENCENT_SMS_REGION=ap-guangzhou
+```
+
+短信模板需要包含一个变量 `{1}`，系统会把候选人专属 HTTPS 申请表链接填入该变量。后台会显示真实发送状态；失败后可点击“重新发送短信”，也可随时复制链接人工发送。
+
 ## 本地启动（Mac / Windows）
 
 1. 安装并启动 Docker Desktop。
