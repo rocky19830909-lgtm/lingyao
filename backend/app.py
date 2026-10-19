@@ -6,6 +6,7 @@ import json
 import os
 import re
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -432,6 +433,41 @@ def flow_dict(x: ResumeFlow, db: Session, include_answers: bool = True):
     template=db.get(FormTemplate,payload.get("template_id")) if payload.get("template_id") else None
     return {"id":x.id,"token":x.token,"candidate_id":x.candidate_id,"candidate_name":candidate.name if candidate else "—","job_id":x.job_id,"job_title":job.title if job else None,"sender_id":x.sender_id,"sender_name":sender.display_name if sender else "灵曜猎聘","form_header":sender.form_header if sender else "求职申请表","interview_requirements":sender.interview_requirements if sender else None,"flow_type":x.flow_type,"recipient_phone":x.recipient_phone,"title":x.title,"message":payload.get("message",x.message),"template_id":template.id if template else None,"template_name":template.name if template else None,"fields":json.loads(template.fields_json) if template else None,"status":x.status,"sms_status":x.sms_status,"answers":json.loads(x.form_data) if include_answers and x.form_data else None,"created_at":x.created_at,"submitted_at":x.submitted_at,"expires_at":x.expires_at,"public_url":f'{os.getenv("PUBLIC_WEB_URL","http://localhost:3000")}/?form={x.token}'}
 
+def send_tencent_sms(phone: str, url: str, sender_signature: str | None = None) -> str:
+    secret_id=os.getenv("TENCENT_SMS_SECRET_ID") or os.getenv("COS_SECRET_ID")
+    secret_key=os.getenv("TENCENT_SMS_SECRET_KEY") or os.getenv("COS_SECRET_KEY")
+    sdk_app_id=os.getenv("TENCENT_SMS_SDK_APP_ID");template_id=os.getenv("TENCENT_SMS_TEMPLATE_ID")
+    sign_name=os.getenv("TENCENT_SMS_SIGN_NAME") or sender_signature
+    if not all((secret_id,secret_key,sdk_app_id,template_id,sign_name)):return "短信未配置"
+    host="sms.tencentcloudapi.com";service="sms";version="2021-01-11";region=os.getenv("TENCENT_SMS_REGION","ap-guangzhou")
+    payload=json.dumps({"PhoneNumberSet":[f"+86{phone}"],"SmsSdkAppId":sdk_app_id,"SignName":sign_name,"TemplateId":template_id,"TemplateParamSet":[url]},ensure_ascii=False,separators=(",",":"))
+    timestamp=int(time.time());date=datetime.fromtimestamp(timestamp,timezone.utc).strftime("%Y-%m-%d")
+    canonical_headers=f"content-type:application/json; charset=utf-8\nhost:{host}\nx-tc-action:sendsms\n";signed_headers="content-type;host;x-tc-action"
+    canonical_request="POST\n/\n\n"+canonical_headers+"\n"+signed_headers+"\n"+hashlib.sha256(payload.encode()).hexdigest();scope=f"{date}/{service}/tc3_request"
+    string_to_sign="TC3-HMAC-SHA256\n"+str(timestamp)+"\n"+scope+"\n"+hashlib.sha256(canonical_request.encode()).hexdigest()
+    def sign(key: bytes,msg: str):return hmac.new(key,msg.encode(),hashlib.sha256).digest()
+    signing_key=sign(sign(sign(("TC3"+secret_key).encode(),date),service),"tc3_request")
+    signature=hmac.new(signing_key,string_to_sign.encode(),hashlib.sha256).hexdigest()
+    authorization=f"TC3-HMAC-SHA256 Credential={secret_id}/{scope}, SignedHeaders={signed_headers}, Signature={signature}"
+    try:
+        response=httpx.post(f"https://{host}",content=payload.encode(),headers={"Authorization":authorization,"Content-Type":"application/json; charset=utf-8","Host":host,"X-TC-Action":"SendSms","X-TC-Timestamp":str(timestamp),"X-TC-Version":version,"X-TC-Region":region},timeout=12)
+        data=response.json().get("Response",{})
+        if data.get("Error"):return "发送失败·"+data["Error"].get("Code","短信服务错误")[:20]
+        status=(data.get("SendStatusSet") or [{}])[0]
+        return "短信已发送" if status.get("Code")=="Ok" else "发送失败·"+str(status.get("Code") or "短信服务拒绝")[:20]
+    except Exception:return "发送失败·短信服务连接异常"
+
+def deliver_flow_sms(x: ResumeFlow, db: Session) -> str:
+    sender=db.get(CompanySender,x.sender_id) if x.sender_id else None
+    url=f'{os.getenv("PUBLIC_WEB_URL","http://localhost:3000")}/?form={x.token}'
+    webhook=os.getenv("SMS_WEBHOOK_URL")
+    if webhook:
+        try:
+            response=httpx.post(webhook,json={"phone":x.recipient_phone,"signature":sender.sms_signature if sender else "财富自由之路","content":f"{x.title}：{url}","url":url},timeout=12)
+            response.raise_for_status();return "短信已发送"
+        except Exception:return "发送失败·短信网关异常"
+    return send_tencent_sms(x.recipient_phone,url,sender.sms_signature if sender else None)
+
 
 @app.post("/api/resumes/parse")
 async def parse_resume(file:UploadFile=File(...), user:User=Depends(current_user)):
@@ -569,8 +605,7 @@ def create_resume_flow(body:ResumeFlowIn,db:Session=Depends(get_db),user:User=De
     if body.job_id and not db.get(Job,body.job_id):raise HTTPException(404,"职位不存在")
     sender=db.get(CompanySender,body.sender_id) if body.sender_id else None
     if body.sender_id and not sender:raise HTTPException(404,"发送主体不存在")
-    phone=clean_phone(body.recipient_phone)
-    if not phone:raise HTTPException(400,"请填写候选人手机号")
+    phone=valid_mobile(body.recipient_phone)
     labels={"application":"求职申请表","personality":"性格测试","interview":"面试邀请"}
     template=db.get(FormTemplate,body.template_id) if body.template_id else None
     if body.flow_type!="interview" and not template:raise HTTPException(400,"请选择申请表或性格测试模板")
@@ -578,15 +613,16 @@ def create_resume_flow(body:ResumeFlowIn,db:Session=Depends(get_db),user:User=De
     stored_message=json.dumps({"template_id":template.id,"message":body.message},ensure_ascii=False) if template else body.message
     x=ResumeFlow(token=secrets.token_urlsafe(24),candidate_id=candidate.id,job_id=body.job_id,sender_id=body.sender_id,flow_type=body.flow_type,recipient_phone=phone,title=body.title or f"{sender.display_name if sender else '灵曜猎聘'} · {labels[body.flow_type]}",message=stored_message,status="已发送" if body.flow_type=="interview" else "待填写",created_by=user.id,expires_at=datetime.utcnow()+timedelta(days=14))
     db.add(x);db.flush()
-    url=f'{os.getenv("PUBLIC_WEB_URL","http://localhost:3000")}/?form={x.token}'
-    webhook=os.getenv("SMS_WEBHOOK_URL")
-    if webhook:
-        try:
-            r=httpx.post(webhook,json={"phone":phone,"signature":sender.sms_signature if sender else "灵曜猎聘","content":f"{x.title}：{url}"},timeout=10)
-            r.raise_for_status();x.sms_status="短信已发送"
-        except Exception:x.sms_status="短信发送失败"
-    else:x.sms_status="演示模式·请复制链接"
+    x.sms_status=deliver_flow_sms(x,db)
     audit(db,user,"send",f"resume_flow_{body.flow_type}",x.id,phone);db.commit();return flow_dict(x,db)
+
+@app.post("/api/resume-flow/{flow_id}/send-sms")
+def resend_flow_sms(flow_id:int,db:Session=Depends(get_db),user:User=Depends(current_user)):
+    require_admin(user);x=db.get(ResumeFlow,flow_id)
+    if not x:raise HTTPException(404,"简历流程不存在")
+    if x.expires_at<datetime.utcnow():raise HTTPException(410,"链接已过期，请重新发起流程")
+    x.sms_status=deliver_flow_sms(x,db);audit(db,user,"resend","resume_flow_sms",x.id,x.recipient_phone);db.commit()
+    return flow_dict(x,db)
 
 @app.get("/api/public/resume-flow/{token}")
 def public_resume_flow(token:str,db:Session=Depends(get_db)):
