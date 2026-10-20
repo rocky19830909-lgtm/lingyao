@@ -64,6 +64,7 @@ class Candidate(Base):
     graduation_time: Mapped[str | None] = mapped_column(String(40))
     years: Mapped[int | None] = mapped_column(Integer)
     expected_salary: Mapped[str | None] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(20), default="投递中")
     summary: Mapped[str | None] = mapped_column(Text)
     visibility: Mapped[str] = mapped_column(String(20), default="company")
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -183,7 +184,8 @@ class CandidateIn(BaseModel):
     name: str; phone: str | None = None; email: str | None = None; city: str | None = None
     current_company: str | None = None; current_title: str | None = None; school: str | None = None
     degree: str | None = None; gender: str | None = None; graduation_time: str | None = None; years: int | None = None; expected_salary: str | None = None
-    summary: str | None = None; visibility: str = "company"; owner_id: int | None = None
+    summary: str | None = None; visibility: str = "company"; owner_id: int | None = None; status: str = "投递中"
+class CandidateStatusIn(BaseModel): status: str
 class ClientIn(BaseModel): name: str; industry: str | None = None; contact_name: str | None = None; contact_phone: str | None = None
 class JobIn(BaseModel): title: str; client_id: int; city: str | None = None; salary: str | None = None
 class ApplicationIn(BaseModel): candidate_id: int; job_id: int; stage: str = "搜寻"
@@ -270,7 +272,7 @@ def clean_phone(v: str | None): return re.sub(r"\D", "", v or "") or None
 def candidate_dict(c: Candidate, viewer: User, db: Session | None = None):
     can_contact = viewer.role in ("admin", "manager") or viewer.id == c.owner_id
     owner=db.get(User,c.owner_id) if db else None
-    return {"id":c.id,"name":c.name,"phone":c.phone if can_contact else mask(c.phone),"email":c.email if can_contact else mask_email(c.email),"city":c.city,"current_company":c.current_company,"current_title":c.current_title,"school":c.school,"degree":c.degree,"gender":c.gender,"graduation_time":c.graduation_time,"years":c.years,"expected_salary":c.expected_salary,"summary":c.summary,"visibility":c.visibility,"owner_id":c.owner_id,"owner_name":owner.name if owner else f"顾问 #{c.owner_id}","can_view_contact":can_contact,"created_at":c.created_at}
+    return {"id":c.id,"name":c.name,"phone":c.phone if can_contact else mask(c.phone),"email":c.email if can_contact else mask_email(c.email),"city":c.city,"current_company":c.current_company,"current_title":c.current_title,"school":c.school,"degree":c.degree,"gender":c.gender,"graduation_time":c.graduation_time,"years":c.years,"expected_salary":c.expected_salary,"status":c.status or "投递中","summary":c.summary,"visibility":c.visibility,"owner_id":c.owner_id,"owner_name":owner.name if owner else f"顾问 #{c.owner_id}","can_view_contact":can_contact,"created_at":c.created_at}
 
 
 def mask(v): return ("****" + v[-4:]) if v else None
@@ -301,6 +303,7 @@ def startup():
     with engine.begin() as conn:
         if "gender" not in candidate_columns:conn.execute(text("ALTER TABLE candidates ADD COLUMN gender VARCHAR(20)"))
         if "graduation_time" not in candidate_columns:conn.execute(text("ALTER TABLE candidates ADD COLUMN graduation_time VARCHAR(40)"))
+        if "status" not in candidate_columns:conn.execute(text("ALTER TABLE candidates ADD COLUMN status VARCHAR(20) DEFAULT '投递中' NOT NULL"))
     with SessionLocal() as db:
         if not db.query(User).first(): seed(db)
         else:
@@ -390,6 +393,7 @@ def candidates(q: str="", city: str|None=None, company: str|None=None, school: s
 
 @app.post("/api/candidates", status_code=201)
 def create_candidate(body: CandidateIn, db: Session=Depends(get_db), user: User=Depends(current_user)):
+    if body.status not in ("投递中","面试中","谈薪中","已入职"):raise HTTPException(400,"无效人才状态")
     duplicate = find_duplicate(db, body.phone, body.email)
     if duplicate: raise HTTPException(409, {"message":"发现重复人才","candidate_id":duplicate.id,"name":duplicate.name})
     data=body.model_dump(); data["phone"]=clean_phone(data["phone"]); data["owner_id"]=data["owner_id"] or user.id
@@ -401,8 +405,18 @@ def update_candidate(candidate_id:int, body:CandidateIn, db:Session=Depends(get_
     c=db.get(Candidate,candidate_id)
     if not c: raise HTTPException(404,"候选人不存在")
     if user.role not in ("admin","manager") and c.owner_id!=user.id: raise HTTPException(403,"无权编辑该人才")
+    if body.status not in ("投递中","面试中","谈薪中","已入职"):raise HTTPException(400,"无效人才状态")
     for k,v in body.model_dump(exclude_unset=True).items(): setattr(c,k,clean_phone(v) if k=="phone" else v)
     db.commit(); return candidate_dict(c,user,db)
+
+@app.patch("/api/candidates/{candidate_id}/status")
+def update_candidate_status(candidate_id:int, body:CandidateStatusIn, db:Session=Depends(get_db), user:User=Depends(current_user)):
+    require_admin(user)
+    if body.status not in ("投递中","面试中","谈薪中","已入职"):raise HTTPException(400,"无效人才状态")
+    c=db.get(Candidate,candidate_id)
+    if not c:raise HTTPException(404,"候选人不存在")
+    c.status=body.status;audit(db,user,"update_status","candidate",c.id,body.status);db.commit()
+    return candidate_dict(c,user,db)
 
 
 @app.get("/api/candidates/duplicates/check")
