@@ -21,6 +21,8 @@ def test_core_flow():
         assert moved.json()["stage"]=="推荐"
         detail=client.get(f"/api/candidates/{people.json()[0]['id']}",headers=headers)
         assert detail.status_code==200 and "notes" in detail.json() and "attachments" in detail.json()
+        changed_status=client.patch(f"/api/candidates/{people.json()[0]['id']}/status",headers=headers,json={"status":"面试中"})
+        assert changed_status.status_code==200 and changed_status.json()["status"]=="面试中"
         dashboard=client.get("/api/dashboard",headers=headers)
         assert dashboard.status_code==200 and dashboard.json()["candidates"]>=3
         users=client.get("/api/users",headers=headers)
@@ -32,7 +34,9 @@ def test_core_flow():
         assert avatar.status_code==200
         assert client.get("http://testserver"+avatar.json()["avatar_url"]).status_code==200
 
-        consultant_phone=next(x["phone"] for x in users.json() if x["role"]=="consultant")
+        consultant_user=next(x for x in users.json() if x["id"]!=login.json()["user"]["id"])
+        client.patch(f"/api/users/{consultant_user['id']}",headers=headers,json={"role":"consultant"})
+        consultant_phone=consultant_user["phone"]
         consultant_login=client.post("/api/auth/login",json={"phone":consultant_phone,"password":"123456"}).json()
         consultant_headers={"Authorization":f"Bearer {consultant_login['access_token']}"}
         protected=client.get("/api/users",headers=consultant_headers)
@@ -40,6 +44,12 @@ def test_core_flow():
         shared=client.get("/api/candidates",headers=consultant_headers).json()
         someone_else=next(x for x in shared if x["owner_id"]!=consultant_login["user"]["id"])
         assert someone_else["can_view_contact"] is False and someone_else["phone"].startswith("****")
+        consultant_id=consultant_login["user"]["id"]
+        promoted=client.patch(f"/api/users/{consultant_id}",headers=headers,json={"role":"admin"})
+        assert promoted.status_code==200 and promoted.json()["role"]=="admin"
+        promoted_login=client.post("/api/auth/login",json={"phone":consultant_phone,"password":"123456"}).json()
+        promoted_headers={"Authorization":f"Bearer {promoted_login['access_token']}"}
+        assert client.get("/api/users",headers=promoted_headers).status_code==200
 
         senders=client.get("/api/resume-flow/senders",headers=headers).json()
         templates=client.get("/api/resume-flow/templates",headers=headers).json()
@@ -54,3 +64,10 @@ def test_core_flow():
         flows=client.get("/api/resume-flow",headers=headers).json()
         saved=next(x for x in flows if x["token"]==token)
         assert saved["status"]=="已填写" and saved["answers"]["姓名"]=="测试候选人"
+
+        assert client.delete(f"/api/resume-flow/{flow.json()['id']}",headers=headers).status_code==204
+        assert client.delete(f"/api/jobs/{job.json()['id']}",headers=headers).status_code==204
+        temporary_client=client.post("/api/clients",headers=headers,json={"name":"待删除测试客户"})
+        assert temporary_client.status_code==201
+        assert client.delete(f"/api/clients/{temporary_client.json()['id']}",headers=headers).status_code==204
+        client.patch(f"/api/users/{consultant_id}",headers=headers,json={"role":"consultant"})
